@@ -278,11 +278,16 @@ void Editor::processInsert(int key) {
     switch (key) {
         case KEY_ENTER: {
             std::string& line = lines_[cursorRow_];
-            std::string newLine = line.substr(cursorCol_);
+            std::string indent;
+            for (char ch : line) {
+                if (ch == ' ' || ch == '\t') indent += ch;
+                else break;
+            }
+            std::string newLine = indent + line.substr(cursorCol_);
             line = line.substr(0, cursorCol_);
             lines_.insert(lines_.begin() + cursorRow_ + 1, newLine);
             cursorRow_++;
-            cursorCol_ = 0;
+            cursorCol_ = static_cast<int>(indent.size());
             dirty_ = true;
             break;
         }
