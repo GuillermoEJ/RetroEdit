@@ -40,6 +40,7 @@ void Editor::run() {
             case Mode::NORMAL:  processNormal(key); break;
             case Mode::INSERT:  processInsert(key); break;
             case Mode::COMMAND: processCommand(key); break;
+            case Mode::VISUAL:  processVisual(key); break;
         }
     }
 
@@ -228,6 +229,31 @@ void Editor::processNormal(int key) {
             break;
         case 'N':
             searchPrev();
+            break;
+        case 'v':
+            mode_ = Mode::VISUAL;
+            visualStartRow_ = cursorRow_;
+            visualStartCol_ = cursorCol_;
+            break;
+        case 'y':
+            yankBuffer_ = {lines_[cursorRow_]};
+            yankIsLine_ = true;
+            setStatus("1 line yanked");
+            break;
+        case 'p':
+            if (!yankBuffer_.empty()) {
+                pushUndo();
+                if (yankIsLine_) {
+                    for (int i = static_cast<int>(yankBuffer_.size()) - 1; i >= 0; i--)
+                        lines_.insert(lines_.begin() + cursorRow_ + 1, yankBuffer_[i]);
+                    cursorRow_++;
+                    cursorCol_ = 0;
+                } else {
+                    lines_[cursorRow_].insert(cursorCol_ + 1, yankBuffer_[0]);
+                    cursorCol_ += static_cast<int>(yankBuffer_[0].size());
+                }
+                dirty_ = true;
+            }
             break;
     }
     clampCol();
@@ -422,6 +448,7 @@ std::string Editor::modeString() {
         case Mode::NORMAL: return "NORMAL";
         case Mode::INSERT: return "INSERT";
         case Mode::COMMAND: return "COMMAND";
+        case Mode::VISUAL: return "VISUAL";
     }
     return "???";
 }
@@ -467,6 +494,58 @@ void Editor::searchPrev() {
         }
     }
     setStatus("Pattern not found: " + searchPattern_);
+}
+
+void Editor::processVisual(int key) {
+    switch (key) {
+        case KEY_ESCAPE:
+            mode_ = Mode::NORMAL;
+            break;
+        case 'h': case KEY_ARROW_LEFT:
+            if (cursorCol_ > 0) cursorCol_--;
+            break;
+        case 'l': case KEY_ARROW_RIGHT:
+            if (cursorCol_ < static_cast<int>(lines_[cursorRow_].size()) - 1)
+                cursorCol_++;
+            break;
+        case 'k': case KEY_ARROW_UP:
+            if (cursorRow_ > 0) cursorRow_--;
+            break;
+        case 'j': case KEY_ARROW_DOWN:
+            if (cursorRow_ < static_cast<int>(lines_.size()) - 1)
+                cursorRow_++;
+            break;
+        case 'y':
+            yankSelection();
+            mode_ = Mode::NORMAL;
+            break;
+        case 'd':
+            yankSelection();
+            deleteSelection();
+            mode_ = Mode::NORMAL;
+            break;
+    }
+}
+
+void Editor::yankSelection() {
+    int startRow = std::min(visualStartRow_, cursorRow_);
+    int endRow = std::max(visualStartRow_, cursorRow_);
+    yankBuffer_.clear();
+    for (int i = startRow; i <= endRow; i++)
+        yankBuffer_.push_back(lines_[i]);
+    yankIsLine_ = true;
+    setStatus(std::to_string(endRow - startRow + 1) + " lines yanked");
+}
+
+void Editor::deleteSelection() {
+    int startRow = std::min(visualStartRow_, cursorRow_);
+    int endRow = std::max(visualStartRow_, cursorRow_);
+    pushUndo();
+    lines_.erase(lines_.begin() + startRow, lines_.begin() + endRow + 1);
+    if (lines_.empty()) lines_.push_back("");
+    cursorRow_ = std::min(startRow, static_cast<int>(lines_.size()) - 1);
+    cursorCol_ = 0;
+    dirty_ = true;
 }
 
 void Editor::pushUndo() {

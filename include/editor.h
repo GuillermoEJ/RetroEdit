@@ -5,7 +5,7 @@
 
 namespace retro {
 
-enum class Mode { NORMAL, INSERT, COMMAND };
+enum class Mode { NORMAL, INSERT, COMMAND, VISUAL };
 
 class Editor {
 public:
@@ -40,6 +40,15 @@ private:
     void pushUndo();
     void undo();
     void redo();
+
+    int visualStartRow_ = 0;
+    int visualStartCol_ = 0;
+    std::vector<std::string> yankBuffer_;
+    bool yankIsLine_ = false;
+
+    void processVisual(int key);
+    void yankSelection();
+    void deleteSelection();
 
     void refreshScreen();
     void drawRows();
