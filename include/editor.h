@@ -27,6 +27,9 @@ private:
     bool dirty_ = false;
     bool running_ = true;
 
+    std::string searchPattern_;
+    bool searchActive_ = false;
+
     void refreshScreen();
     void drawRows();
     void drawStatusBar();
@@ -40,6 +43,8 @@ private:
 
     void save();
     void setStatus(const std::string& msg);
+    void searchNext();
+    void searchPrev();
 
     int clampCol();
     std::string modeString();

@@ -207,6 +207,16 @@ void Editor::processNormal(int key) {
                 dirty_ = true;
             }
             break;
+        case '/':
+            mode_ = Mode::COMMAND;
+            commandBuf_ = "/";
+            break;
+        case 'n':
+            searchNext();
+            break;
+        case 'N':
+            searchPrev();
+            break;
     }
     clampCol();
 
@@ -297,6 +307,12 @@ void Editor::processCommand(int key) {
 }
 
 void Editor::executeCommand(const std::string& cmd) {
+    if (!cmd.empty() && cmd[0] == '/') {
+        searchPattern_ = cmd.substr(1);
+        searchActive_ = !searchPattern_.empty();
+        if (searchActive_) searchNext();
+        return;
+    }
     if (cmd == "q") {
         if (dirty_) {
             setStatus("Cambios sin guardar! Usa :q! o :w primero");
@@ -396,6 +412,49 @@ std::string Editor::modeString() {
         case Mode::COMMAND: return "COMMAND";
     }
     return "???";
+}
+
+void Editor::searchNext() {
+    if (!searchActive_ || searchPattern_.empty()) return;
+
+    int startRow = cursorRow_;
+    int startCol = cursorCol_ + 1;
+
+    for (int i = 0; i < static_cast<int>(lines_.size()); i++) {
+        int row = (startRow + i) % static_cast<int>(lines_.size());
+        int col = (i == 0) ? startCol : 0;
+        auto pos = lines_[row].find(searchPattern_, col);
+        if (pos != std::string::npos) {
+            cursorRow_ = row;
+            cursorCol_ = static_cast<int>(pos);
+            setStatus("/" + searchPattern_);
+            return;
+        }
+    }
+    setStatus("Pattern not found: " + searchPattern_);
+}
+
+void Editor::searchPrev() {
+    if (!searchActive_ || searchPattern_.empty()) return;
+
+    int startRow = cursorRow_;
+    int startCol = cursorCol_ - 1;
+
+    for (int i = 0; i < static_cast<int>(lines_.size()); i++) {
+        int row = (startRow - i + static_cast<int>(lines_.size())) % static_cast<int>(lines_.size());
+        std::string& line = lines_[row];
+        int searchEnd = (i == 0) ? startCol : static_cast<int>(line.size());
+        if (searchEnd < 0) continue;
+
+        auto pos = line.rfind(searchPattern_, searchEnd);
+        if (pos != std::string::npos) {
+            cursorRow_ = row;
+            cursorCol_ = static_cast<int>(pos);
+            setStatus("?" + searchPattern_);
+            return;
+        }
+    }
+    setStatus("Pattern not found: " + searchPattern_);
 }
 
 }
