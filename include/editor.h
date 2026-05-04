@@ -50,6 +50,19 @@ private:
     void yankSelection();
     void deleteSelection();
 
+    struct Buffer {
+        std::vector<std::string> lines;
+        std::string filename;
+        int cursorRow = 0, cursorCol = 0;
+        int scrollRow = 0, scrollCol = 0;
+        bool dirty = false;
+    };
+    std::vector<Buffer> buffers_;
+    int currentBuffer_ = 0;
+    void switchBuffer(int idx);
+    void saveCurrentBuffer();
+    void loadCurrentBuffer();
+
     void refreshScreen();
     void drawRows();
     void drawStatusBar();

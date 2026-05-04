@@ -24,6 +24,8 @@ void Editor::open(const std::string& filename) {
     if (lines_.empty()) lines_.push_back("");
     dirty_ = false;
     Syntax::detectLanguage(filename_);
+    buffers_.clear();
+    saveCurrentBuffer();
 }
 
 void Editor::run() {
@@ -412,8 +414,63 @@ void Editor::executeCommand(const std::string& cmd) {
         Terminal::readKey();
     } else if (cmd == "vstatus") {
         setStatus(VCS::status(filename_));
+    } else if (cmd.substr(0, 2) == "e ") {
+        saveCurrentBuffer();
+        std::string newFile = cmd.substr(2);
+        int found = -1;
+        for (int i = 0; i < static_cast<int>(buffers_.size()); i++) {
+            if (buffers_[i].filename == newFile) { found = i; break; }
+        }
+        if (found >= 0) {
+            switchBuffer(found);
+        } else {
+            Buffer buf;
+            buf.filename = newFile;
+            std::ifstream f(newFile);
+            if (f.is_open()) {
+                std::string line;
+                while (std::getline(f, line)) buf.lines.push_back(line);
+            }
+            if (buf.lines.empty()) buf.lines.push_back("");
+            buffers_.push_back(buf);
+            switchBuffer(static_cast<int>(buffers_.size()) - 1);
+        }
+        Syntax::detectLanguage(filename_);
+        setStatus(filename_);
+    } else if (cmd == "bn") {
+        if (buffers_.size() > 1) {
+            saveCurrentBuffer();
+            switchBuffer((currentBuffer_ + 1) % static_cast<int>(buffers_.size()));
+            Syntax::detectLanguage(filename_);
+            setStatus(filename_);
+        }
+    } else if (cmd == "bp") {
+        if (buffers_.size() > 1) {
+            saveCurrentBuffer();
+            int prev = currentBuffer_ - 1;
+            if (prev < 0) prev = static_cast<int>(buffers_.size()) - 1;
+            switchBuffer(prev);
+            Syntax::detectLanguage(filename_);
+            setStatus(filename_);
+        }
+    } else if (cmd == "ls") {
+        Terminal::clear();
+        Terminal::moveCursor(0, 0);
+        Terminal::setColor(CYAN);
+        Terminal::write("=== BUFFERS ===\r\n\r\n");
+        for (int i = 0; i < static_cast<int>(buffers_.size()); i++) {
+            if (i == currentBuffer_) Terminal::setColor(GREEN);
+            else Terminal::setColor(WHITE);
+            Terminal::write("  " + std::to_string(i) + ": " + buffers_[i].filename +
+                          (buffers_[i].dirty ? " [+]" : "") +
+                          (i == currentBuffer_ ? " <" : "") + "\r\n");
+        }
+        Terminal::resetColor();
+        Terminal::write("\r\nPress any key...");
+        Terminal::flush();
+        Terminal::readKey();
     } else {
-        setStatus("Comando desconocido: " + cmd);
+        setStatus("Unknown command: " + cmd);
     }
 }
 
@@ -546,6 +603,46 @@ void Editor::deleteSelection() {
     cursorRow_ = std::min(startRow, static_cast<int>(lines_.size()) - 1);
     cursorCol_ = 0;
     dirty_ = true;
+}
+
+void Editor::saveCurrentBuffer() {
+    if (buffers_.empty()) {
+        Buffer buf;
+        buf.lines = lines_;
+        buf.filename = filename_;
+        buf.cursorRow = cursorRow_;
+        buf.cursorCol = cursorCol_;
+        buf.scrollRow = scrollRow_;
+        buf.scrollCol = scrollCol_;
+        buf.dirty = dirty_;
+        buffers_.push_back(buf);
+        currentBuffer_ = 0;
+        return;
+    }
+    auto& buf = buffers_[currentBuffer_];
+    buf.lines = lines_;
+    buf.filename = filename_;
+    buf.cursorRow = cursorRow_;
+    buf.cursorCol = cursorCol_;
+    buf.scrollRow = scrollRow_;
+    buf.scrollCol = scrollCol_;
+    buf.dirty = dirty_;
+}
+
+void Editor::loadCurrentBuffer() {
+    auto& buf = buffers_[currentBuffer_];
+    lines_ = buf.lines;
+    filename_ = buf.filename;
+    cursorRow_ = buf.cursorRow;
+    cursorCol_ = buf.cursorCol;
+    scrollRow_ = buf.scrollRow;
+    scrollCol_ = buf.scrollCol;
+    dirty_ = buf.dirty;
+}
+
+void Editor::switchBuffer(int idx) {
+    currentBuffer_ = idx;
+    loadCurrentBuffer();
 }
 
 void Editor::pushUndo() {
