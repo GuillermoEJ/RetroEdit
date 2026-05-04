@@ -1,0 +1,7 @@
+.retroedit/
+build/
+cmake-build-*/
+*.o
+*.exe
+CMakeCache.txt
+CMakeFiles/
