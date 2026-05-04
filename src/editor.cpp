@@ -2,9 +2,11 @@
 #include "terminal.h"
 #include "vcs.h"
 #include "syntax.h"
+#include "config.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <ctime>
 
 namespace retro {
 
@@ -66,11 +68,22 @@ void Editor::refreshScreen() {
 }
 
 void Editor::drawRows() {
+    auto& cfg = Config::instance();
+    int textColor = GREEN;
+    if (cfg.theme == "amber") textColor = YELLOW;
+    else if (cfg.theme == "blue") textColor = CYAN;
+    else if (cfg.theme == "white") textColor = WHITE;
+
     for (int y = 0; y < screenRows_; y++) {
         int fileRow = y + scrollRow_;
         if (fileRow < static_cast<int>(lines_.size())) {
             Terminal::setColor(BRIGHT_BLACK);
-            std::string num = std::to_string(fileRow + 1);
+            int displayNum;
+            if (cfg.relativeNumbers && fileRow != cursorRow_)
+                displayNum = std::abs(fileRow - cursorRow_);
+            else
+                displayNum = fileRow + 1;
+            std::string num = std::to_string(displayNum);
             while (num.size() < 4) num = " " + num;
             Terminal::write(num + " ");
 
@@ -88,12 +101,12 @@ void Editor::drawRows() {
                         case TokenType::STRING: Terminal::setColor(YELLOW); break;
                         case TokenType::NUMBER: Terminal::setColor(RED); break;
                         case TokenType::COMMENT: Terminal::setColor(BRIGHT_BLACK); break;
-                        default: Terminal::setColor(GREEN); break;
+                        default: Terminal::setColor(textColor); break;
                     }
                     Terminal::write(line.substr(tStart, tEnd - tStart));
                 }
             } else {
-                Terminal::setColor(GREEN);
+                Terminal::setColor(textColor);
                 int len = static_cast<int>(line.size()) - scrollCol_;
                 if (len < 0) len = 0;
                 if (len > screenCols_ - 5) len = screenCols_ - 5;
@@ -101,21 +114,58 @@ void Editor::drawRows() {
                     Terminal::write(line.substr(scrollCol_, len));
             }
         } else {
-            Terminal::setColor(BRIGHT_BLACK);
-            Terminal::write("~");
+            if (filename_.empty() && lines_.size() == 1 && lines_[0].empty()) {
+                int mid = screenRows_ / 3;
+                if (y == mid) {
+                    Terminal::setColor(textColor);
+                    std::string title = "RETROEDIT v0.1";
+                    int pad2 = (screenCols_ - static_cast<int>(title.size())) / 2;
+                    if (pad2 > 0) Terminal::write(std::string(pad2, ' '));
+                    Terminal::write(title);
+                } else if (y == mid + 2) {
+                    Terminal::setColor(BRIGHT_BLACK);
+                    std::string hint = ":e <file> to open | :q to quit | i to insert";
+                    int pad2 = (screenCols_ - static_cast<int>(hint.size())) / 2;
+                    if (pad2 > 0) Terminal::write(std::string(pad2, ' '));
+                    Terminal::write(hint);
+                } else {
+                    Terminal::setColor(BRIGHT_BLACK);
+                    Terminal::write("~");
+                }
+            } else {
+                Terminal::setColor(BRIGHT_BLACK);
+                Terminal::write("~");
+            }
         }
         Terminal::resetColor();
+        if (cfg.crtEffect && y % 2 == 1)
+            Terminal::write("\x1b[2m");
         Terminal::write("\x1b[K\r\n");
+        if (cfg.crtEffect && y % 2 == 1)
+            Terminal::write("\x1b[22m");
     }
 }
 
 void Editor::drawStatusBar() {
-    Terminal::setColor(BLACK, GREEN);
+    auto& cfg = Config::instance();
+    int barBg = GREEN;
+    if (cfg.theme == "amber") barBg = YELLOW;
+    else if (cfg.theme == "blue") barBg = CYAN;
+
+    Terminal::setColor(BLACK, barBg);
     std::string left = " " + modeString() + " | " +
-                       (filename_.empty() ? "[Sin nombre]" : filename_) +
+                       (filename_.empty() ? "[no name]" : filename_) +
                        (dirty_ ? " [+]" : "");
     std::string right = "L" + std::to_string(cursorRow_ + 1) + ":" +
-                        "C" + std::to_string(cursorCol_ + 1) + " ";
+                        "C" + std::to_string(cursorCol_ + 1);
+
+    if (cfg.showClock) {
+        std::time_t t = std::time(nullptr);
+        char timeBuf[6];
+        std::strftime(timeBuf, sizeof(timeBuf), "%H:%M", std::localtime(&t));
+        right += " " + std::string(timeBuf);
+    }
+    right += " ";
 
     int pad = screenCols_ - static_cast<int>(left.size()) - static_cast<int>(right.size());
     if (pad < 0) pad = 0;
@@ -556,6 +606,17 @@ void Editor::executeCommand(const std::string& cmd) {
         Terminal::write("\r\nPress any key...");
         Terminal::flush();
         Terminal::readKey();
+    } else if (cmd == "set rnu") {
+        Config::instance().relativeNumbers = true;
+    } else if (cmd == "set nornu") {
+        Config::instance().relativeNumbers = false;
+    } else if (cmd.substr(0, 10) == "set theme ") {
+        Config::instance().theme = cmd.substr(10);
+        setStatus("Theme: " + Config::instance().theme);
+    } else if (cmd == "set crt") {
+        Config::instance().crtEffect = true;
+    } else if (cmd == "set nocrt") {
+        Config::instance().crtEffect = false;
     } else {
         setStatus("Unknown command: " + cmd);
     }
