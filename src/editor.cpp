@@ -1,0 +1,380 @@
+#include "editor.h"
+#include "terminal.h"
+#include "vcs.h"
+#include <fstream>
+#include <algorithm>
+
+namespace retro {
+
+Editor::Editor() {
+    lines_.push_back("");
+}
+
+void Editor::open(const std::string& filename) {
+    filename_ = filename;
+    lines_.clear();
+    std::ifstream f(filename);
+    if (f.is_open()) {
+        std::string line;
+        while (std::getline(f, line)) {
+            lines_.push_back(line);
+        }
+    }
+    if (lines_.empty()) lines_.push_back("");
+    dirty_ = false;
+}
+
+void Editor::run() {
+    Terminal::enableRawMode();
+    Terminal::getSize(screenRows_, screenCols_);
+    screenRows_ -= 2;
+
+    while (running_) {
+        refreshScreen();
+        int key = Terminal::readKey();
+        if (key == 0) continue;
+
+        switch (mode_) {
+            case Mode::NORMAL:  processNormal(key); break;
+            case Mode::INSERT:  processInsert(key); break;
+            case Mode::COMMAND: processCommand(key); break;
+        }
+    }
+
+    Terminal::clear();
+    Terminal::disableRawMode();
+}
+
+void Editor::refreshScreen() {
+    Terminal::write("\x1b[?25l");
+    Terminal::moveCursor(0, 0);
+    drawRows();
+    drawStatusBar();
+    drawCommandBar();
+
+    int displayRow = cursorRow_ - scrollRow_;
+    int displayCol = cursorCol_ - scrollCol_;
+    Terminal::moveCursor(displayRow, displayCol);
+    Terminal::write("\x1b[?25h");
+    Terminal::flush();
+}
+
+void Editor::drawRows() {
+    for (int y = 0; y < screenRows_; y++) {
+        int fileRow = y + scrollRow_;
+        if (fileRow < static_cast<int>(lines_.size())) {
+            Terminal::setColor(BRIGHT_BLACK);
+            std::string num = std::to_string(fileRow + 1);
+            while (num.size() < 4) num = " " + num;
+            Terminal::write(num + " ");
+            Terminal::setColor(GREEN);
+
+            std::string& line = lines_[fileRow];
+            int len = static_cast<int>(line.size()) - scrollCol_;
+            if (len < 0) len = 0;
+            if (len > screenCols_ - 5) len = screenCols_ - 5;
+            if (scrollCol_ < static_cast<int>(line.size()))
+                Terminal::write(line.substr(scrollCol_, len));
+        } else {
+            Terminal::setColor(BRIGHT_BLACK);
+            Terminal::write("~");
+        }
+        Terminal::resetColor();
+        Terminal::write("\x1b[K\r\n");
+    }
+}
+
+void Editor::drawStatusBar() {
+    Terminal::setColor(BLACK, GREEN);
+    std::string left = " " + modeString() + " | " +
+                       (filename_.empty() ? "[Sin nombre]" : filename_) +
+                       (dirty_ ? " [+]" : "");
+    std::string right = "L" + std::to_string(cursorRow_ + 1) + ":" +
+                        "C" + std::to_string(cursorCol_ + 1) + " ";
+
+    int pad = screenCols_ - static_cast<int>(left.size()) - static_cast<int>(right.size());
+    if (pad < 0) pad = 0;
+    Terminal::write(left + std::string(pad, ' ') + right);
+    Terminal::resetColor();
+    Terminal::write("\r\n");
+}
+
+void Editor::drawCommandBar() {
+    Terminal::write("\x1b[K");
+    if (mode_ == Mode::COMMAND) {
+        Terminal::setColor(CYAN);
+        Terminal::write(":" + commandBuf_);
+        Terminal::resetColor();
+    } else if (!statusMsg_.empty()) {
+        Terminal::setColor(YELLOW);
+        Terminal::write(statusMsg_);
+        Terminal::resetColor();
+    }
+}
+
+void Editor::processNormal(int key) {
+    statusMsg_.clear();
+    switch (key) {
+        case 'i':
+            mode_ = Mode::INSERT;
+            break;
+        case 'a':
+            if (cursorCol_ < static_cast<int>(lines_[cursorRow_].size()))
+                cursorCol_++;
+            mode_ = Mode::INSERT;
+            break;
+        case 'o':
+            lines_.insert(lines_.begin() + cursorRow_ + 1, "");
+            cursorRow_++;
+            cursorCol_ = 0;
+            mode_ = Mode::INSERT;
+            dirty_ = true;
+            break;
+        case 'O':
+            lines_.insert(lines_.begin() + cursorRow_, "");
+            cursorCol_ = 0;
+            mode_ = Mode::INSERT;
+            dirty_ = true;
+            break;
+        case ':':
+            mode_ = Mode::COMMAND;
+            commandBuf_.clear();
+            break;
+        case 'h': case KEY_ARROW_LEFT:
+            if (cursorCol_ > 0) cursorCol_--;
+            break;
+        case 'l': case KEY_ARROW_RIGHT:
+            if (cursorCol_ < static_cast<int>(lines_[cursorRow_].size()) - 1)
+                cursorCol_++;
+            break;
+        case 'k': case KEY_ARROW_UP:
+            if (cursorRow_ > 0) cursorRow_--;
+            break;
+        case 'j': case KEY_ARROW_DOWN:
+            if (cursorRow_ < static_cast<int>(lines_.size()) - 1)
+                cursorRow_++;
+            break;
+        case '0': case KEY_HOME:
+            cursorCol_ = 0;
+            break;
+        case '$': case KEY_END:
+            cursorCol_ = std::max(0, static_cast<int>(lines_[cursorRow_].size()) - 1);
+            break;
+        case 'g':
+            cursorRow_ = 0;
+            cursorCol_ = 0;
+            break;
+        case 'G':
+            cursorRow_ = static_cast<int>(lines_.size()) - 1;
+            cursorCol_ = 0;
+            break;
+        case 'x':
+            if (!lines_[cursorRow_].empty() && cursorCol_ < static_cast<int>(lines_[cursorRow_].size())) {
+                lines_[cursorRow_].erase(cursorCol_, 1);
+                dirty_ = true;
+            }
+            break;
+        case 'd':
+            if (lines_.size() > 1) {
+                lines_.erase(lines_.begin() + cursorRow_);
+                if (cursorRow_ >= static_cast<int>(lines_.size()))
+                    cursorRow_ = static_cast<int>(lines_.size()) - 1;
+                dirty_ = true;
+            } else {
+                lines_[0].clear();
+                cursorCol_ = 0;
+                dirty_ = true;
+            }
+            break;
+    }
+    clampCol();
+
+    if (cursorRow_ < scrollRow_) scrollRow_ = cursorRow_;
+    if (cursorRow_ >= scrollRow_ + screenRows_) scrollRow_ = cursorRow_ - screenRows_ + 1;
+    if (cursorCol_ < scrollCol_) scrollCol_ = cursorCol_;
+    if (cursorCol_ >= scrollCol_ + screenCols_ - 5) scrollCol_ = cursorCol_ - screenCols_ + 6;
+}
+
+void Editor::processInsert(int key) {
+    statusMsg_.clear();
+    if (key == KEY_ESCAPE) {
+        mode_ = Mode::NORMAL;
+        if (cursorCol_ > 0) cursorCol_--;
+        return;
+    }
+
+    switch (key) {
+        case KEY_ENTER: {
+            std::string& line = lines_[cursorRow_];
+            std::string newLine = line.substr(cursorCol_);
+            line = line.substr(0, cursorCol_);
+            lines_.insert(lines_.begin() + cursorRow_ + 1, newLine);
+            cursorRow_++;
+            cursorCol_ = 0;
+            dirty_ = true;
+            break;
+        }
+        case KEY_BACKSPACE: {
+            if (cursorCol_ > 0) {
+                lines_[cursorRow_].erase(cursorCol_ - 1, 1);
+                cursorCol_--;
+                dirty_ = true;
+            } else if (cursorRow_ > 0) {
+                cursorCol_ = static_cast<int>(lines_[cursorRow_ - 1].size());
+                lines_[cursorRow_ - 1] += lines_[cursorRow_];
+                lines_.erase(lines_.begin() + cursorRow_);
+                cursorRow_--;
+                dirty_ = true;
+            }
+            break;
+        }
+        case KEY_ARROW_UP: if (cursorRow_ > 0) cursorRow_--; break;
+        case KEY_ARROW_DOWN: if (cursorRow_ < static_cast<int>(lines_.size()) - 1) cursorRow_++; break;
+        case KEY_ARROW_LEFT: if (cursorCol_ > 0) cursorCol_--; break;
+        case KEY_ARROW_RIGHT:
+            if (cursorCol_ < static_cast<int>(lines_[cursorRow_].size())) cursorCol_++;
+            break;
+        case KEY_TAB:
+            lines_[cursorRow_].insert(cursorCol_, "    ");
+            cursorCol_ += 4;
+            dirty_ = true;
+            break;
+        default:
+            if (key >= 32 && key < 127) {
+                lines_[cursorRow_].insert(cursorCol_, 1, static_cast<char>(key));
+                cursorCol_++;
+                dirty_ = true;
+            }
+            break;
+    }
+    clampCol();
+
+    if (cursorRow_ < scrollRow_) scrollRow_ = cursorRow_;
+    if (cursorRow_ >= scrollRow_ + screenRows_) scrollRow_ = cursorRow_ - screenRows_ + 1;
+}
+
+void Editor::processCommand(int key) {
+    if (key == KEY_ESCAPE) {
+        mode_ = Mode::NORMAL;
+        commandBuf_.clear();
+        return;
+    }
+    if (key == KEY_ENTER) {
+        executeCommand(commandBuf_);
+        commandBuf_.clear();
+        mode_ = Mode::NORMAL;
+        return;
+    }
+    if (key == KEY_BACKSPACE) {
+        if (!commandBuf_.empty()) commandBuf_.pop_back();
+        else mode_ = Mode::NORMAL;
+        return;
+    }
+    if (key >= 32 && key < 127) {
+        commandBuf_ += static_cast<char>(key);
+    }
+}
+
+void Editor::executeCommand(const std::string& cmd) {
+    if (cmd == "q") {
+        if (dirty_) {
+            setStatus("Cambios sin guardar! Usa :q! o :w primero");
+            return;
+        }
+        running_ = false;
+    } else if (cmd == "q!") {
+        running_ = false;
+    } else if (cmd == "w") {
+        save();
+    } else if (cmd == "wq" || cmd == "x") {
+        save();
+        running_ = false;
+    } else if (cmd.substr(0, 2) == "w ") {
+        filename_ = cmd.substr(2);
+        save();
+    } else if (cmd == "vinit") {
+        VCS::init(filename_);
+        setStatus("VCS inicializado para " + filename_);
+    } else if (cmd.substr(0, 8) == "vcommit ") {
+        if (dirty_) save();
+        VCS::commit(filename_, cmd.substr(8));
+        setStatus("Commit creado: " + cmd.substr(8));
+    } else if (cmd == "vlog") {
+        Terminal::clear();
+        Terminal::moveCursor(0, 0);
+        Terminal::setColor(CYAN);
+        Terminal::write("=== HISTORIAL DE COMMITS ===\r\n\r\n");
+        auto commits = VCS::log(filename_);
+        for (auto& c : commits) {
+            Terminal::setColor(YELLOW);
+            Terminal::write("[" + c.id + "] ");
+            Terminal::setColor(WHITE);
+            Terminal::write(c.message);
+            Terminal::setColor(BRIGHT_BLACK);
+            Terminal::write(" (" + c.timestamp + ")\r\n");
+        }
+        if (commits.empty()) {
+            Terminal::setColor(RED);
+            Terminal::write("No hay commits.\r\n");
+        }
+        Terminal::resetColor();
+        Terminal::write("\r\nPulsa cualquier tecla...");
+        Terminal::flush();
+        Terminal::readKey();
+    } else if (cmd == "vdiff") {
+        Terminal::clear();
+        Terminal::moveCursor(0, 0);
+        Terminal::setColor(CYAN);
+        Terminal::write("=== DIFF vs ULTIMO COMMIT ===\r\n\r\n");
+        std::string d = VCS::diff(filename_);
+        for (char ch : d) {
+            if (ch == '\n') Terminal::write("\r\n");
+            else Terminal::write(std::string(1, ch));
+        }
+        Terminal::resetColor();
+        Terminal::write("\r\nPulsa cualquier tecla...");
+        Terminal::flush();
+        Terminal::readKey();
+    } else if (cmd == "vstatus") {
+        setStatus(VCS::status(filename_));
+    } else {
+        setStatus("Comando desconocido: " + cmd);
+    }
+}
+
+void Editor::save() {
+    if (filename_.empty()) {
+        setStatus("No hay nombre de archivo. Usa :w <nombre>");
+        return;
+    }
+    std::ofstream f(filename_);
+    for (size_t i = 0; i < lines_.size(); i++) {
+        f << lines_[i];
+        if (i < lines_.size() - 1) f << '\n';
+    }
+    dirty_ = false;
+    setStatus("Guardado: " + filename_ + " (" + std::to_string(lines_.size()) + " lineas)");
+}
+
+void Editor::setStatus(const std::string& msg) {
+    statusMsg_ = msg;
+}
+
+int Editor::clampCol() {
+    int maxCol = static_cast<int>(lines_[cursorRow_].size());
+    if (mode_ == Mode::NORMAL && maxCol > 0) maxCol--;
+    if (cursorCol_ > maxCol) cursorCol_ = maxCol;
+    if (cursorCol_ < 0) cursorCol_ = 0;
+    return cursorCol_;
+}
+
+std::string Editor::modeString() {
+    switch (mode_) {
+        case Mode::NORMAL: return "NORMAL";
+        case Mode::INSERT: return "INSERT";
+        case Mode::COMMAND: return "COMMAND";
+    }
+    return "???";
+}
+
+}
