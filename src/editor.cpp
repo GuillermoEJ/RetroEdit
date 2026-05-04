@@ -3,6 +3,7 @@
 #include "vcs.h"
 #include "syntax.h"
 #include <fstream>
+#include <sstream>
 #include <algorithm>
 
 namespace retro {
@@ -414,6 +415,87 @@ void Editor::executeCommand(const std::string& cmd) {
         Terminal::readKey();
     } else if (cmd == "vstatus") {
         setStatus(VCS::status(filename_));
+    } else if (cmd.substr(0, 8) == "vbranch ") {
+        VCS::createBranch(filename_, cmd.substr(8));
+        VCS::checkoutBranch(filename_, cmd.substr(8));
+        setStatus("Created and switched to branch: " + cmd.substr(8));
+    } else if (cmd.substr(0, 10) == "vcheckout ") {
+        std::string target = cmd.substr(10);
+        auto branches = VCS::listBranches(filename_);
+        bool isBranch = false;
+        for (auto& b : branches) if (b == target) { isBranch = true; break; }
+        if (isBranch) {
+            VCS::checkoutBranch(filename_, target);
+            auto commits = VCS::log(filename_);
+            if (!commits.empty()) {
+                lines_.clear();
+                std::istringstream ss(commits[0].snapshot);
+                std::string line;
+                while (std::getline(ss, line)) lines_.push_back(line);
+                if (lines_.empty()) lines_.push_back("");
+                cursorRow_ = 0; cursorCol_ = 0;
+            }
+            setStatus("Switched to branch: " + target);
+        } else {
+            std::string content = VCS::checkoutCommit(filename_, target);
+            if (!content.empty()) {
+                pushUndo();
+                lines_.clear();
+                std::istringstream ss(content);
+                std::string line;
+                while (std::getline(ss, line)) lines_.push_back(line);
+                if (lines_.empty()) lines_.push_back("");
+                cursorRow_ = 0; cursorCol_ = 0;
+                dirty_ = true;
+                setStatus("Checked out commit: " + target);
+            } else {
+                setStatus("Not found: " + target);
+            }
+        }
+    } else if (cmd == "vbranches") {
+        Terminal::clear();
+        Terminal::moveCursor(0, 0);
+        Terminal::setColor(CYAN);
+        Terminal::write("=== BRANCHES ===\r\n\r\n");
+        std::string current = VCS::currentBranch(filename_);
+        auto branches = VCS::listBranches(filename_);
+        for (auto& b : branches) {
+            if (b == current) Terminal::setColor(GREEN);
+            else Terminal::setColor(WHITE);
+            Terminal::write("  " + (b == current ? "* " : "  ") + b + "\r\n");
+        }
+        Terminal::resetColor();
+        Terminal::write("\r\nPress any key...");
+        Terminal::flush();
+        Terminal::readKey();
+    } else if (cmd == "vstash") {
+        VCS::stash(filename_);
+        auto commits = VCS::log(filename_);
+        if (!commits.empty()) {
+            lines_.clear();
+            std::istringstream ss(commits[0].snapshot);
+            std::string line;
+            while (std::getline(ss, line)) lines_.push_back(line);
+            if (lines_.empty()) lines_.push_back("");
+            cursorRow_ = 0; cursorCol_ = 0;
+            dirty_ = false;
+        }
+        setStatus("Stashed working changes");
+    } else if (cmd == "vstash pop") {
+        std::string content = VCS::stashPop(filename_);
+        if (!content.empty()) {
+            pushUndo();
+            lines_.clear();
+            std::istringstream ss(content);
+            std::string line;
+            while (std::getline(ss, line)) lines_.push_back(line);
+            if (lines_.empty()) lines_.push_back("");
+            cursorRow_ = 0; cursorCol_ = 0;
+            dirty_ = true;
+            setStatus("Popped stash");
+        } else {
+            setStatus("No stash found");
+        }
     } else if (cmd.substr(0, 2) == "e ") {
         saveCurrentBuffer();
         std::string newFile = cmd.substr(2);

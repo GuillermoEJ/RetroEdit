@@ -11,8 +11,9 @@ namespace retro {
 
 void VCS::init(const std::string& filepath) {
     std::string dir = repoDir(filepath);
-    fs::create_directories(dir);
-    writeFile(dir + "/HEAD", "");
+    fs::create_directories(dir + "/branches");
+    writeFile(dir + "/BRANCH", "main");
+    writeFile(dir + "/branches/main", "");
 }
 
 void VCS::commit(const std::string& filepath, const std::string& message) {
@@ -26,17 +27,21 @@ void VCS::commit(const std::string& filepath, const std::string& message) {
     std::string commitData = hash + "\n" + message + "\n" + ts + "\n" + content;
     writeFile(dir + "/" + hash, commitData);
 
-    std::string head = readFile(dir + "/HEAD");
+    std::string branch = currentBranch(filepath);
+    std::string branchFile = dir + "/branches/" + branch;
+    std::string head = readFile(branchFile);
     head = hash + "\n" + head;
-    writeFile(dir + "/HEAD", head);
+    writeFile(branchFile, head);
 }
 
 std::vector<Commit> VCS::log(const std::string& filepath) {
     std::vector<Commit> result;
     std::string dir = repoDir(filepath);
-    if (!fs::exists(dir + "/HEAD")) return result;
+    std::string branch = currentBranch(filepath);
+    std::string branchFile = dir + "/branches/" + branch;
+    if (!fs::exists(branchFile)) return result;
 
-    std::string head = readFile(dir + "/HEAD");
+    std::string head = readFile(branchFile);
     std::istringstream iss(head);
     std::string hash;
     while (std::getline(iss, hash)) {
@@ -98,8 +103,68 @@ std::string VCS::status(const std::string& filepath) {
 
     std::string current = readFile(filepath);
     if (current == commits[0].snapshot)
-        return "Limpio - sin cambios (" + std::to_string(commits.size()) + " commits)";
-    return "Modificado - cambios sin commit (" + std::to_string(commits.size()) + " commits)";
+        return "Clean (" + branch + ", " + std::to_string(commits.size()) + " commits)";
+    return "Modified (" + branch + ", " + std::to_string(commits.size()) + " commits)";
+}
+
+std::string VCS::currentBranch(const std::string& filepath) {
+    std::string dir = repoDir(filepath);
+    std::string branch = readFile(dir + "/BRANCH");
+    if (branch.empty()) return "main";
+    while (!branch.empty() && (branch.back() == '\n' || branch.back() == '\r'))
+        branch.pop_back();
+    return branch;
+}
+
+void VCS::createBranch(const std::string& filepath, const std::string& name) {
+    std::string dir = repoDir(filepath);
+    std::string current = currentBranch(filepath);
+    std::string currentCommits = readFile(dir + "/branches/" + current);
+    writeFile(dir + "/branches/" + name, currentCommits);
+}
+
+void VCS::checkoutBranch(const std::string& filepath, const std::string& name) {
+    std::string dir = repoDir(filepath);
+    if (!fs::exists(dir + "/branches/" + name)) return;
+    writeFile(dir + "/BRANCH", name);
+}
+
+std::string VCS::checkoutCommit(const std::string& filepath, const std::string& hash) {
+    std::string dir = repoDir(filepath);
+    std::string data = readFile(dir + "/" + hash);
+    if (data.empty()) return "";
+    std::istringstream ds(data);
+    std::string id, msg, ts;
+    std::getline(ds, id);
+    std::getline(ds, msg);
+    std::getline(ds, ts);
+    std::string rest;
+    std::getline(ds, rest, '\0');
+    return rest;
+}
+
+std::vector<std::string> VCS::listBranches(const std::string& filepath) {
+    std::vector<std::string> result;
+    std::string dir = repoDir(filepath) + "/branches";
+    if (!fs::exists(dir)) return result;
+    for (auto& entry : fs::directory_iterator(dir))
+        result.push_back(entry.path().filename().string());
+    return result;
+}
+
+void VCS::stash(const std::string& filepath) {
+    std::string dir = repoDir(filepath);
+    std::string content = readFile(filepath);
+    writeFile(dir + "/STASH", content);
+}
+
+std::string VCS::stashPop(const std::string& filepath) {
+    std::string dir = repoDir(filepath);
+    std::string stashFile = dir + "/STASH";
+    if (!fs::exists(stashFile)) return "";
+    std::string content = readFile(stashFile);
+    fs::remove(stashFile);
+    return content;
 }
 
 std::string VCS::repoDir(const std::string& filepath) {
