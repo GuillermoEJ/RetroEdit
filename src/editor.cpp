@@ -137,14 +137,17 @@ void Editor::processNormal(int key) {
     statusMsg_.clear();
     switch (key) {
         case 'i':
+            pushUndo();
             mode_ = Mode::INSERT;
             break;
         case 'a':
+            pushUndo();
             if (cursorCol_ < static_cast<int>(lines_[cursorRow_].size()))
                 cursorCol_++;
             mode_ = Mode::INSERT;
             break;
         case 'o':
+            pushUndo();
             lines_.insert(lines_.begin() + cursorRow_ + 1, "");
             cursorRow_++;
             cursorCol_ = 0;
@@ -152,6 +155,7 @@ void Editor::processNormal(int key) {
             dirty_ = true;
             break;
         case 'O':
+            pushUndo();
             lines_.insert(lines_.begin() + cursorRow_, "");
             cursorCol_ = 0;
             mode_ = Mode::INSERT;
@@ -191,11 +195,13 @@ void Editor::processNormal(int key) {
             break;
         case 'x':
             if (!lines_[cursorRow_].empty() && cursorCol_ < static_cast<int>(lines_[cursorRow_].size())) {
+                pushUndo();
                 lines_[cursorRow_].erase(cursorCol_, 1);
                 dirty_ = true;
             }
             break;
         case 'd':
+            pushUndo();
             if (lines_.size() > 1) {
                 lines_.erase(lines_.begin() + cursorRow_);
                 if (cursorRow_ >= static_cast<int>(lines_.size()))
@@ -206,6 +212,12 @@ void Editor::processNormal(int key) {
                 cursorCol_ = 0;
                 dirty_ = true;
             }
+            break;
+        case 'u':
+            undo();
+            break;
+        case 18:
+            redo();
             break;
         case '/':
             mode_ = Mode::COMMAND;
@@ -455,6 +467,40 @@ void Editor::searchPrev() {
         }
     }
     setStatus("Pattern not found: " + searchPattern_);
+}
+
+void Editor::pushUndo() {
+    undoStack_.push_back({lines_, cursorRow_, cursorCol_});
+    if (undoStack_.size() > 100) undoStack_.pop_front();
+    redoStack_.clear();
+}
+
+void Editor::undo() {
+    if (undoStack_.empty()) {
+        setStatus("Already at oldest change");
+        return;
+    }
+    redoStack_.push_back({lines_, cursorRow_, cursorCol_});
+    auto& snap = undoStack_.back();
+    lines_ = snap.lines;
+    cursorRow_ = snap.row;
+    cursorCol_ = snap.col;
+    undoStack_.pop_back();
+    dirty_ = true;
+}
+
+void Editor::redo() {
+    if (redoStack_.empty()) {
+        setStatus("Already at newest change");
+        return;
+    }
+    undoStack_.push_back({lines_, cursorRow_, cursorCol_});
+    auto& snap = redoStack_.back();
+    lines_ = snap.lines;
+    cursorRow_ = snap.row;
+    cursorCol_ = snap.col;
+    redoStack_.pop_back();
+    dirty_ = true;
 }
 
 }

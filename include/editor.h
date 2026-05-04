@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <deque>
 
 namespace retro {
 
@@ -29,6 +30,16 @@ private:
 
     std::string searchPattern_;
     bool searchActive_ = false;
+
+    struct Snapshot {
+        std::vector<std::string> lines;
+        int row, col;
+    };
+    std::deque<Snapshot> undoStack_;
+    std::deque<Snapshot> redoStack_;
+    void pushUndo();
+    void undo();
+    void redo();
 
     void refreshScreen();
     void drawRows();
