@@ -10,6 +10,7 @@ add_executable(retroedit
     src/editor.cpp
     src/vcs.cpp
     src/syntax.cpp
+    src/config.cpp
 )
 
 target_include_directories(retroedit PRIVATE include)
