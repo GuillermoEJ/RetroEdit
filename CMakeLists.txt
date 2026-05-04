@@ -9,12 +9,7 @@ add_executable(retroedit
     src/terminal.cpp
     src/editor.cpp
     src/vcs.cpp
+    src/syntax.cpp
 )
 
 target_include_directories(retroedit PRIVATE include)
-
-if(WIN32)
-    # No extra libs needed on Windows (uses conio/Windows API)
-else()
-    # Linux/macOS needs nothing extra for raw terminal
-endif()

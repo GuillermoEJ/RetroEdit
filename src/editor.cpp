@@ -1,6 +1,7 @@
 #include "editor.h"
 #include "terminal.h"
 #include "vcs.h"
+#include "syntax.h"
 #include <fstream>
 #include <algorithm>
 
@@ -22,6 +23,7 @@ void Editor::open(const std::string& filename) {
     }
     if (lines_.empty()) lines_.push_back("");
     dirty_ = false;
+    Syntax::detectLanguage(filename_);
 }
 
 void Editor::run() {
@@ -67,14 +69,33 @@ void Editor::drawRows() {
             std::string num = std::to_string(fileRow + 1);
             while (num.size() < 4) num = " " + num;
             Terminal::write(num + " ");
-            Terminal::setColor(GREEN);
 
             std::string& line = lines_[fileRow];
-            int len = static_cast<int>(line.size()) - scrollCol_;
-            if (len < 0) len = 0;
-            if (len > screenCols_ - 5) len = screenCols_ - 5;
-            if (scrollCol_ < static_cast<int>(line.size()))
-                Terminal::write(line.substr(scrollCol_, len));
+            if (Syntax::hasLanguage()) {
+                auto tokens = Syntax::highlight(line);
+                for (auto& tok : tokens) {
+                    if (tok.start >= scrollCol_ + screenCols_ - 5) break;
+                    int tStart = std::max(tok.start, scrollCol_);
+                    int tEnd = std::min(tok.start + tok.length, scrollCol_ + screenCols_ - 5);
+                    if (tStart >= tEnd) continue;
+                    switch (tok.type) {
+                        case TokenType::KEYWORD: Terminal::setColor(MAGENTA); break;
+                        case TokenType::TYPE: Terminal::setColor(CYAN); break;
+                        case TokenType::STRING: Terminal::setColor(YELLOW); break;
+                        case TokenType::NUMBER: Terminal::setColor(RED); break;
+                        case TokenType::COMMENT: Terminal::setColor(BRIGHT_BLACK); break;
+                        default: Terminal::setColor(GREEN); break;
+                    }
+                    Terminal::write(line.substr(tStart, tEnd - tStart));
+                }
+            } else {
+                Terminal::setColor(GREEN);
+                int len = static_cast<int>(line.size()) - scrollCol_;
+                if (len < 0) len = 0;
+                if (len > screenCols_ - 5) len = screenCols_ - 5;
+                if (scrollCol_ < static_cast<int>(line.size()))
+                    Terminal::write(line.substr(scrollCol_, len));
+            }
         } else {
             Terminal::setColor(BRIGHT_BLACK);
             Terminal::write("~");
